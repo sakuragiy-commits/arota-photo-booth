@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#eaf7fb">
+<title>あろー太と写真を撮ろう！</title>
+<style>
+:root { color-scheme: light; --blue:#1684a5; --pale:#eaf7fb; }
+* { box-sizing:border-box; }
+body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:#f6fbfc; color:#17323a; }
+header { padding:14px 16px 8px; text-align:center; }
+h1 { margin:0; font-size:1.35rem; }
+header p { margin:6px 0 0; font-size:.9rem; }
+main { max-width:620px; margin:0 auto; padding:8px 12px 24px; }
+#stage { position:relative; width:100%; aspect-ratio:3/4; overflow:hidden; border-radius:16px; background:#1d2a30; touch-action:pan-y; }
+#video { width:100%; height:100%; display:block; object-fit:cover; }
+#sticker { position:absolute; left:72%; top:68%; width:38%; height:auto; transform:translate(-50%,-50%); touch-action:none; user-select:none; -webkit-user-drag:none; cursor:grab; }
+.controls { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin:12px 0; }
+button, .file-label { border:0; border-radius:999px; padding:12px 16px; font-size:1rem; font-weight:650; background:var(--blue); color:white; cursor:pointer; }
+button.secondary, .file-label { background:#dceff4; color:#17323a; }
+button:disabled { opacity:.45; cursor:not-allowed; }
+.hint { background:white; border:1px solid #d8e9ee; padding:10px 12px; border-radius:12px; font-size:.9rem; line-height:1.5; }
+#status { min-height:1.5em; font-size:.9rem; text-align:center; color:#334f58; }
+#result { display:none; width:100%; border-radius:12px; margin-top:12px; }
+#resultActions { display:none; text-align:center; margin-top:8px; }
+input[type=file] { display:none; }
+footer { text-align:center; color:#59717a; font-size:.78rem; padding:8px 16px 20px; }
+@media (max-width:380px) { button,.file-label { padding:10px 13px; font-size:.92rem; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>あろー太と写真を撮ろう！</h1>
+  <p>あろー太を動かして、好きな位置で記念撮影しよう</p>
+</header>
+<main>
+  <div id="stage" aria-label="カメラプレビュー">
+    <video id="video" autoplay playsinline muted></video>
+    <img id="sticker" src="aro-ta.png" alt="あろー太（ドラッグして移動できます）">
+  </div>
+  <div class="controls">
+    <button id="start">カメラを起動</button>
+    <button id="flip" class="secondary" disabled>前後カメラ切替</button>
+    <button id="reset" class="secondary">位置を戻す</button>
+    <button id="capture" disabled>写真を撮る</button>
+  </div>
+  <div class="hint">
+    <strong>使い方</strong><br>
+    ①「カメラを起動」を押してカメラを許可<br>
+    ② あろー太を指でドラッグして移動<br>
+    ③ 2本指でつまむ／広げると拡大・縮小<br>
+    ④「写真を撮る」を押し、画像を保存<br>
+    ※カメラはHTTPSで公開したページで動作します。カメラを使わず写真を選ぶ機能は、この簡易版には含まれていません。
+  </div>
+  <p id="status" role="status">まず「カメラを起動」を押してください。</p>
+  <img id="result" alt="撮影した写真">
+  <div id="resultActions">
+    <a id="download" download="arota-photo.png"><button type="button">写真をダウンロード</button></a>
+    <p class="hint">iPhoneでは画像を長押しして「写真に保存」が必要な場合があります。Androidではダウンロード後、写真アプリで確認してください。</p>
+  </div>
+  <canvas id="canvas" hidden></canvas>
+</main>
+<footer>あろー太の元イラスト（透明背景PNG）を aro-ta.png という名前で同じフォルダに置いてください。</footer>
+<script>
+const video = document.getElementById('video');
+const stage = document.getElementById('stage');
+const sticker = document.getElementById('sticker');
+const startBtn = document.getElementById('start');
+const flipBtn = document.getElementById('flip');
+const captureBtn = document.getElementById('capture');
+const statusEl = document.getElementById('status');
+const result = document.getElementById('result');
+const resultActions = document.getElementById('resultActions');
+const download = document.getElementById('download');
+const canvas = document.getElementById('canvas');
+let stream = null;
+let facingMode = 'environment';
+let stickerScale = 1;
+let pointers = new Map();
+let pinchStartDistance = 0;
+let pinchStartScale = 1;
+
+function setStatus(msg) { statusEl.textContent = msg; }
+async function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus('このブラウザではカメラを利用できません。HTTPSのURLをスマホで開いてください。');
+    return;
+  }
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facingMode } }, audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    captureBtn.disabled = false;
+    flipBtn.disabled = false;
+    startBtn.textContent = 'カメラを再起動';
+    setStatus('あろー太を動かして位置を調整してください。');
+  } catch (e) {
+    setStatus('カメラを起動できません。ブラウザのカメラ許可、HTTPS接続、他アプリがカメラを使用していないかをご確認ください。');
+  }
+}
+startBtn.addEventListener('click', startCamera);
+flipBtn.addEventListener('click', async () => {
+  facingMode = facingMode === 'environment' ? 'user' : 'environment';
+  await startCamera();
+});
+document.getElementById('reset').addEventListener('click', () => {
+  sticker.style.left = '72%'; sticker.style.top = '68%'; stickerScale = 1;
+  sticker.style.transform = 'translate(-50%,-50%) scale(1)';
+  setStatus('あろー太の位置を戻しました。');
+});
+function applyScale() {
+  sticker.style.transform = `translate(-50%,-50%) scale(${stickerScale})`;
+}
+function distance(a,b) { return Math.hypot(a.x-b.x, a.y-b.y); }
+sticker.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  sticker.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, {x:e.clientX,y:e.clientY});
+  if (pointers.size === 2) {
+    const pts = [...pointers.values()];
+    pinchStartDistance = distance(pts[0],pts[1]);
+    pinchStartScale = stickerScale;
+  }
+});
+sticker.addEventListener('pointermove', e => {
+  if (!pointers.has(e.pointerId)) return;
+  const previous = pointers.get(e.pointerId);
+  pointers.set(e.pointerId, {x:e.clientX,y:e.clientY});
+  if (pointers.size >= 2) {
+    const pts = [...pointers.values()];
+    if (pinchStartDistance > 0) {
+      stickerScale = Math.max(0.35, Math.min(2.6, pinchStartScale * distance(pts[0],pts[1]) / pinchStartDistance));
+      applyScale();
+    }
+  } else {
+    const dx = e.clientX - previous.x, dy = e.clientY - previous.y;
+    const r = stage.getBoundingClientRect();
+    sticker.style.left = `${Math.max(0,Math.min(100,(sticker.offsetLeft + dx)/r.width*100))}%`;
+    sticker.style.top = `${Math.max(0,Math.min(100,(sticker.offsetTop + dy)/r.height*100))}%`;
+  }
+});
+function clearPointer(e) { pointers.delete(e.pointerId); if (pointers.size < 2) pinchStartDistance = 0; }
+sticker.addEventListener('pointerup', clearPointer);
+sticker.addEventListener('pointercancel', clearPointer);
+sticker.addEventListener('lostpointercapture', clearPointer);
+
+function drawCover(ctx, source, sw, sh, dw, dh) {
+  const sourceRatio = sw / sh, destRatio = dw / dh;
+  let sx=0, sy=0, sWidth=sw, sHeight=sh;
+  if (sourceRatio > destRatio) {
+    sWidth = sh * destRatio; sx = (sw - sWidth) / 2;
+  } else {
+    sHeight = sw / destRatio; sy = (sh - sHeight) / 2;
+  }
+  ctx.drawImage(source, sx, sy, sWidth, sHeight, 0, 0, dw, dh);
+}
+captureBtn.addEventListener('click', () => {
+  if (!video.videoWidth || !sticker.complete || !sticker.naturalWidth) {
+    setStatus('カメラまたはあろー太の画像が読み込まれていません。aro-ta.pngの配置を確認してください。');
+    return;
+  }
+  const rect = stage.getBoundingClientRect();
+  const outW = 1080, outH = Math.round(outW * rect.height / rect.width);
+  canvas.width = outW; canvas.height = outH;
+  const ctx = canvas.getContext('2d');
+  drawCover(ctx, video, video.videoWidth, video.videoHeight, outW, outH);
+  const sRect = sticker.getBoundingClientRect();
+  const cx = (sRect.left + sRect.width/2 - rect.left) / rect.width * outW;
+  const cy = (sRect.top + sRect.height/2 - rect.top) / rect.height * outH;
+  const sw = sRect.width / rect.width * outW;
+  const sh = sRect.height / rect.height * outH;
+  ctx.drawImage(sticker, cx-sw/2, cy-sh/2, sw, sh);
+  const data = canvas.toDataURL('image/png');
+  result.src = data; result.style.display = 'block';
+  download.href = data; resultActions.style.display = 'block';
+  setStatus('撮影しました。下のボタンから写真を保存できます。');
+  result.scrollIntoView({behavior:'smooth',block:'nearest'});
+});
+sticker.addEventListener('error', () => setStatus('あろー太の画像が見つかりません。aro-ta.pngをindex.htmlと同じ場所に置いてください。'));
+</script>
+</body>
+</html>
